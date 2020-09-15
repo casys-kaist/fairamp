@@ -2,6 +2,9 @@
 
 by Changdae Kim (cdkim@calab.kaist.ac.kr)
 
+## Overview
+
+
 ## How to install
 1. Download Linux kernel 3.7.3 and patch linux-3.7.3-fairamp.patch.
 2. Compile and install the patched kernel on the system.
@@ -45,3 +48,7 @@ by Changdae Kim (cdkim@calab.kaist.ac.kr)
 Changdae Kim and Jaehyuk Huh. Exploring the Design Space of Fair Scheduling Supports for Asymmetric Multicore Systems. IEEE Transactions on Computers, vol. 67, no. 8, pp. 1136-1152, August 2018.
 
 https://ieeexplore.ieee.org/document/8265024
+ 
+## Future Works
+1. Testing the test script to work on the original environment.
+1. Merge and update the software to work on lastest versions. (Targeting Ubuntu 18.04 and Linux 5.4)
