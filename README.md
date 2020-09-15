@@ -15,8 +15,10 @@ by Changdae Kim (cdkim@calab.kaist.ac.kr)
    * General setup -> FAIRAMP measures instruction per seconds
 3. Go to tools/fairamp in the patched kernel source tree.
 4. Install the tool to using fairness-oriented scheduler.
-   $ make
-   $ sudo make install
+```
+$ make
+$ sudo make install
+```
 
 ## How to run
 1. Run the following command and refer to the usage
