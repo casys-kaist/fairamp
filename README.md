@@ -23,18 +23,19 @@ $ sudo make install
 
 ## How to run
 1. Run the following command and refer to the usage
-   
+```  
    $ fairamp -h
-   
+```   
 2. Sample run command is here.
-
+```
    $ fairamp -c test.comm
-   
+``` 
    (test.comm is included in tools/fairamp/)
    
 3. If you want to see less messages, use the follow command. The other options are same with fairamp.
-
+```
    $ fairamp.quiet -c test.comm
+```
 
 ## NOTE
 1. This software works on x86_64 architecture, that is, 64-bit processors from Intel or AMD.
