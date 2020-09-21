@@ -58,15 +58,18 @@ Schedule cores in a multicore environment.
     CONFIG_KGDB_KDB=y
     CONFIG_KDB_KEYBOARD=y
     ```
-    1. Enable the sys request.
+    
+    2. Enable the sys request.
     ```
     echo 1 > /proc/sys/kernel/sysrq
     ```
-    1. To enable debug sys request,
+
+    3. To enable debug sys request,
     ```
-    echo ttypS0 > /sys/module/kgdboc/parameters/kgdboc
+    echo ttyS0 > /sys/module/kgdboc/parameters/kgdboc
     ```
-    1. Send to be used by KGDB.
+    
+    4. Send to be used by KGDB.
     ```
     echo g > /proc/sysrq-trigger
     ```
