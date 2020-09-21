@@ -47,6 +47,31 @@ Schedule cores in a multicore environment.
    You should clear the following kernel option: Kernel hacking -> Kernel debugging -> Detect Hard and Soft Lockups
    
 
+## Trouble Shooting
+1. Debug the Kernel 
+    1.  Make sure to configure following options when compile the target kernel.
+    ```
+    CONFIG_RANDOMIZE_BASE=n
+    CONFIG_FRAME_POINTER=y
+    CONFIG_KGDB=y
+    CONFIG_KGDB_SERIAL_CONSOLE=y
+    CONFIG_KGDB_KDB=y
+    CONFIG_KDB_KEYBOARD=y
+    ```
+    1.  Enable the sys request.
+    ```
+    echo 1 > /proc/sys/kernel/sysrq
+    ```
+    1.  To enable debug sys request,
+    ```
+    echo ttypS0 > /sys/module/kgdboc/parameters/kgdboc
+    ```
+    1.  Send to be used by KGDB.
+    ```
+    echo g > /proc/sysrq-trigger
+    ```
+
+
 #### For more information, please refer to our paper,
 
 Changdae Kim and Jaehyuk Huh. Exploring the Design Space of Fair Scheduling Supports for Asymmetric Multicore Systems. IEEE Transactions on Computers, vol. 67, no. 8, pp. 1136-1152, August 2018.
