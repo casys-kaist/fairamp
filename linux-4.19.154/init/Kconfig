@@ -250,6 +250,8 @@ config DEFAULT_HOSTNAME
 config ARCH_NO_SWAP
 	bool
 
+source "kernel/Kconfig.fairamp"
+
 config SWAP
 	bool "Support for paging of anonymous memory (swap)"
 	depends on MMU && BLOCK && !ARCH_NO_SWAP

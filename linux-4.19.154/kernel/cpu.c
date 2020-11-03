@@ -2290,6 +2290,10 @@ void __init boot_cpu_init(void)
 	set_cpu_present(cpu, true);
 	set_cpu_possible(cpu, true);
 
+#ifdef CONFIG_FAIRAMP
+    set_cpu_slow(cpu, true);
+#endif
+
 #ifdef CONFIG_SMP
 	__boot_cpu_id = cpu;
 #endif

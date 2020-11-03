@@ -397,8 +397,16 @@ void put_task_stack(struct task_struct *tsk)
 }
 #endif
 
+#ifdef CONFIG_FAIRAMP
+/* defined in kernel/sched/fair.c */
+void dealloc_fairamp_tasks(struct task_struct *);
+#endif
+
 void free_task(struct task_struct *tsk)
 {
+#ifdef CONFIG_FAIRAMP
+    dealloc_fairamp_tasks(tsk);
+#endif
 #ifndef CONFIG_THREAD_INFO_IN_TASK
 	/*
 	 * The task is finally done with both the stack and thread_info,
