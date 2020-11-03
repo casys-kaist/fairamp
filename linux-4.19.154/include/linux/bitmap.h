@@ -43,6 +43,7 @@
  *  bitmap_complement(dst, src, nbits)          *dst = ~(*src)
  *  bitmap_equal(src1, src2, nbits)             Are *src1 and *src2 equal?
  *  bitmap_intersects(src1, src2, nbits)        Do *src1 and *src2 overlap?
+ *  bitmap_intersectsnot(src1, src2, nbits)     Do *src1 and ~(*src2) overlap?
  *  bitmap_subset(src1, src2, nbits)            Is *src1 a subset of *src2?
  *  bitmap_empty(src, nbits)                    Are all bits zero in *src?
  *  bitmap_full(src, nbits)                     Are all bits set in *src?
@@ -136,6 +137,8 @@ extern int __bitmap_andnot(unsigned long *dst, const unsigned long *bitmap1,
 			const unsigned long *bitmap2, unsigned int nbits);
 extern int __bitmap_intersects(const unsigned long *bitmap1,
 			const unsigned long *bitmap2, unsigned int nbits);
+extern int __bitmap_intersectsnot(const unsigned long *bitmap1,
+			const unsigned long *bitmap2, int bits);
 extern int __bitmap_subset(const unsigned long *bitmap1,
 			const unsigned long *bitmap2, unsigned int nbits);
 extern int __bitmap_weight(const unsigned long *bitmap, unsigned int nbits);
@@ -340,6 +343,15 @@ static inline int bitmap_intersects(const unsigned long *src1,
 		return ((*src1 & *src2) & BITMAP_LAST_WORD_MASK(nbits)) != 0;
 	else
 		return __bitmap_intersects(src1, src2, nbits);
+}
+
+static inline int bitmap_intersectsnot(const unsigned long *src1,
+			const unsigned long *src2, int nbits)
+{
+	if (small_const_nbits(nbits))
+		return ((*src1 & ~(*src2)) & BITMAP_LAST_WORD_MASK(nbits)) != 0;
+	else
+		return __bitmap_intersectsnot(src1, src2, nbits);
 }
 
 static inline int bitmap_subset(const unsigned long *src1,
