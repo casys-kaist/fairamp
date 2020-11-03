@@ -90,6 +90,10 @@ extern struct cpumask __cpu_possible_mask;
 extern struct cpumask __cpu_online_mask;
 extern struct cpumask __cpu_present_mask;
 extern struct cpumask __cpu_active_mask;
+#ifdef CONFIG_FAIRAMP
+extern const struct cpumask *const cpu_fast_mask;
+#endif
+
 #define cpu_possible_mask ((const struct cpumask *)&__cpu_possible_mask)
 #define cpu_online_mask   ((const struct cpumask *)&__cpu_online_mask)
 #define cpu_present_mask  ((const struct cpumask *)&__cpu_present_mask)
@@ -100,19 +104,35 @@ extern struct cpumask __cpu_active_mask;
 #define num_possible_cpus()	cpumask_weight(cpu_possible_mask)
 #define num_present_cpus()	cpumask_weight(cpu_present_mask)
 #define num_active_cpus()	cpumask_weight(cpu_active_mask)
+#ifdef CONFIG_FAIRAMP
+#define num_fast_cpus()		cpumask_weight(cpu_fast_mask)
+#define num_slow_cpus()		(num_online_cpus() - num_fast_cpus())
+#endif
 #define cpu_online(cpu)		cpumask_test_cpu((cpu), cpu_online_mask)
 #define cpu_possible(cpu)	cpumask_test_cpu((cpu), cpu_possible_mask)
 #define cpu_present(cpu)	cpumask_test_cpu((cpu), cpu_present_mask)
 #define cpu_active(cpu)		cpumask_test_cpu((cpu), cpu_active_mask)
+#ifdef CONFIG_FAIRAMP
+#define cpu_fast(cpu)		cpumask_test_cpu((cpu), cpu_fast_mask)
+#define cpu_slow(cpu)		(!cpu_fast(cpu))
+#endif
 #else
 #define num_online_cpus()	1U
 #define num_possible_cpus()	1U
 #define num_present_cpus()	1U
 #define num_active_cpus()	1U
+#ifdef CONFIG_FAIRAMP
+#define num_fast_cpus()		0U
+#define num_slow_cpus()		1U
+#endif
 #define cpu_online(cpu)		((cpu) == 0)
 #define cpu_possible(cpu)	((cpu) == 0)
 #define cpu_present(cpu)	((cpu) == 0)
 #define cpu_active(cpu)		((cpu) == 0)
+#ifdef CONFIG_FAIRAMP
+#define cpu_fast(cpu)		false
+#define cpu_slow(cpu)		((cpu) == 0)
+#endif
 #endif
 
 static inline void cpu_max_bits_warn(unsigned int cpu, unsigned int bits)
@@ -486,6 +506,18 @@ static inline bool cpumask_intersects(const struct cpumask *src1p,
 }
 
 /**
+ * cpumask_intersectsnot - (*src1p & *src2p) != 0
+ * @src1p: the first input
+ * @src2p: the second input
+ */
+static inline bool cpumask_intersectsnot(const struct cpumask *src1p,
+				     const struct cpumask *src2p)
+{
+	return bitmap_intersectsnot(cpumask_bits(src1p), cpumask_bits(src2p),
+						      nr_cpumask_bits);
+}
+
+/**
  * cpumask_subset - (*src1p & ~*src2p) == 0
  * @src1p: the first input
  * @src2p: the second input
@@ -777,6 +809,10 @@ extern const DECLARE_BITMAP(cpu_all_bits, NR_CPUS);
 #define for_each_possible_cpu(cpu) for_each_cpu((cpu), cpu_possible_mask)
 #define for_each_online_cpu(cpu)   for_each_cpu((cpu), cpu_online_mask)
 #define for_each_present_cpu(cpu)  for_each_cpu((cpu), cpu_present_mask)
+#ifdef CONFIG_FAIRAMP
+#define for_each_fast_cpu(cpu)   for_each_cpu((cpu), cpu_fast_mask)
+#define for_each_slow_cpu(cpu)   for_each_cpu_not((cpu), cpu_fast_mask)
+#endif
 
 /* Wrappers for arch boot code to manipulate normally-constant masks */
 void init_cpu_present(const struct cpumask *src);
@@ -824,6 +860,22 @@ set_cpu_active(unsigned int cpu, bool active)
 		cpumask_clear_cpu(cpu, &__cpu_active_mask);
 }
 
+#ifdef CONFIG_FAIRAMP
+static inline void
+set_cpu_fast(unsigned int cpu, bool fast)
+{
+	if (fast)
+		cpumask_set_cpu(cpu, &__cpu_fast_mask);
+	else
+		cpumask_clear_cpu(cpu, &__cpu_fast_mask);
+}
+
+static inline void
+set_cpu_slow(unsigned int cpu, bool fast)
+{
+	set_cpu_fast(cpu, !slow);
+}
+#endif
 
 /**
  * to_cpumask - convert an NR_CPUS bitmap to a struct cpumask *

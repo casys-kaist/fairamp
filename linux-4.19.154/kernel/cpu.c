@@ -2257,6 +2257,11 @@ EXPORT_SYMBOL(__cpu_present_mask);
 struct cpumask __cpu_active_mask __read_mostly;
 EXPORT_SYMBOL(__cpu_active_mask);
 
+#ifdef CONFIG_FAIRAMP
+struct cpumask __cpu_fast_mask __read_mostly;
+EXPORT_SYMBOL(__cpu_fast_mask);
+#endif
+
 void init_cpu_present(const struct cpumask *src)
 {
 	cpumask_copy(&__cpu_present_mask, src);
