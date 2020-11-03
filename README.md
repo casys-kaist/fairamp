@@ -4,7 +4,7 @@ by Changdae Kim (cdkim@calab.kaist.ac.kr)
 
 ## Overview
 Schedule cores in a multicore environment.
-![](imgimg.png)
+![](overview.png)
 
 ## How to install
 1. Download Linux kernel 3.7.3 and patch linux-3.7.3-fairamp.patch.
