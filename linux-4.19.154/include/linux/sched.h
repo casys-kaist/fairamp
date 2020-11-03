@@ -456,6 +456,29 @@ struct sched_entity {
 	u64				vruntime;
 	u64				prev_sum_exec_runtime;
 
+#ifdef CONFIG_FAIRAMP
+    /* for statistics, also used for measuring IPS */
+	u64	    		sum_fast_exec_runtime;
+	u64	    		sum_slow_exec_runtime;
+
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+    /* to schedule */
+	u64	        	fast_vruntime;
+	u64	        	slow_vruntime;
+	u64	        	unit_fast_vruntime;
+	u64	        	unit_slow_vruntime;
+    /* round = vruntime / unit_vruntime */
+	u64	        	fast_round;
+	u64	        	slow_round;
+    /* fast_round - slow_round. If only one of unit_vruntime == 0, INT_MAX or INT_MIN */
+	int	        	lagged;
+#endif
+
+    /* for measuring IPS, or just for statistics */
+	u64			sum_fast_exec_runtime_mprev;
+	u64			sum_slow_exec_runtime_mprev;
+#endif /* CONFIG_FAIRAMP */
+
 	u64				nr_migrations;
 
 	struct sched_statistics		statistics;
@@ -656,6 +679,14 @@ struct task_struct {
 
 #ifdef CONFIG_BLK_DEV_IO_TRACE
 	unsigned int			btrace_seq;
+#endif
+
+#ifdef CONFIG_FAIRAMP_MEASURING_IPS
+	/* to measure IPS for each type */
+	atomic64_t insts_fast;
+	atomic_t insts_fast_ovf;
+	atomic64_t insts_slow;
+	atomic_t insts_slow_ovf;
 #endif
 
 	unsigned int			policy;
@@ -1908,4 +1939,8 @@ static inline void rseq_syscall(struct pt_regs *regs)
 
 #endif
 
+#endif
+
+#ifdef CONFIG_FAIRAMP
+extern void update_cpu_time_type(void *dummy);
 #endif
