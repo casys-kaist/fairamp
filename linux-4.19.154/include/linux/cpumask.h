@@ -99,7 +99,7 @@ extern struct cpumask __cpu_fast_mask;
 #define cpu_present_mask  ((const struct cpumask *)&__cpu_present_mask)
 #define cpu_active_mask   ((const struct cpumask *)&__cpu_active_mask)
 #ifdef CONFIG_FAIRAMP
-#define cpu_fask_mask   ((const struct cpumask *)&__cpu_fast_mask)
+#define cpu_fast_mask   ((const struct cpumask *)&__cpu_fast_mask)
 #endif
 
 #if NR_CPUS > 1
