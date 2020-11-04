@@ -4913,13 +4913,13 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 
 #ifdef CONFIG_FAIRAMP_DO_SCHED
 	if (p->se.unit_fast_vruntime > 0 &&
-			cpumask_intersects(in_mask, __cpu_fast_mask) == 0) {
+			cpumask_intersects(in_mask, cpu_fast_mask) == 0) {
 		retval = -EPERM;
 		goto out_put_task;
 	}
 
 	if (p->se.unit_slow_vruntime > 0 &&
-			cpumask_intersectsnot(in_mask, __cpu_fast_mask) == 0) {
+			cpumask_intersectsnot(in_mask, cpu_fast_mask) == 0) {
 		retval = -EPERM;
 		goto out_put_task;
 	}
@@ -5258,10 +5258,10 @@ __do_set_unit_vruntime(struct task_struct *p,
 
 		/* check cpu affinity */
 		if ((t->se.unit_fast_vruntime > 0 &&
-					!cpumask_intersects(&t->cpus_allowed, __cpu_fast_mask))
+					!cpumask_intersects(&t->cpus_allowed, cpu_fast_mask))
 				 ||
 				 (t->se.unit_slow_vruntime > 0 &&
-					!cpumask_intersectsnot(&t->cpus_allowed, __cpu_fast_mask))
+					!cpumask_intersectsnot(&t->cpus_allowed, cpu_fast_mask))
 			) {
 			/* task_rq_lock is already acquired.
 				Here, we always widen the cpus_allowed.
