@@ -248,20 +248,16 @@ static void __update_rq_max_lagged(struct rq *rq) {
  * flag == 0 if dequeue
  */
 void update_rq_max_lagged(struct rq *rq, struct task_struct *p, int lagged, int flag) {
-	BUG_ON(p == NULL);
+	BUG_ON(!p);
 
 	if (p->se.unit_fast_vruntime == 0 && p->se.unit_slow_vruntime == 0) /* ignore this task */
 		return;
 
-	if(flag == 1
-			&& p->state != TASK_RUNNING 
-			&& p->state != TASK_WAKING 
-			&& !(task_thread_info(p)->preempt_count & PREEMPT_ACTIVE)) {
-		flag = 0; /* this will be dequeued */
-	}
-
-	if (flag == 0) { /* case: dequeue */
-		if (rq->max_lagged_task == p)
+	if (flag) {
+        if (p->state != TASK_RUNNING && p->state != TASK_WAKING)
+            flag = 0; /* this will be dequeued */
+	} else { /* case: dequeue */
+		if (p == rq->max_lagged_task)
 			__update_rq_max_lagged(rq);
 		return;
 	}
