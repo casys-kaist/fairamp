@@ -24,6 +24,21 @@
 
 #include <trace/events/sched.h>
 
+#ifdef CONFIG_FAIRAMP_STAT
+#define fairamp_schedstat_inc(rq, var) schedstat_inc(rq, var)
+#else
+#define fairamp_schedstat_inc(rq, var) do{}while(0)
+#endif
+
+#ifndef fdbg
+/* refer to pr_devel() in include/linux/printk.h */
+#ifdef CONFIG_FAIRAMP_DEBUG
+#define fdbg(fmt, ...) printk(KERN_ERR fmt, ##__VA_ARGS__) 
+#else
+#define fdbg(fmt, ...) no_printk(KERN_ERR fmt, ##__VA_ARGS__) 
+#endif /* CONFIG_FAIRAMP_DEBUG */
+#endif
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  *
@@ -715,6 +730,10 @@ static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	return calc_delta_fair(sched_slice(cfs_rq, se), se);
 }
 
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+void update_rq_max_lagged(struct rq *, struct task_struct *, int, int);
+#endif
+
 #ifdef CONFIG_SMP
 #include "pelt.h"
 #include "sched-pelt.h"
@@ -832,6 +851,12 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	struct sched_entity *curr = cfs_rq->curr;
 	u64 now = rq_clock_task(rq_of(cfs_rq));
 	u64 delta_exec;
+#ifdef CONFIG_FAIRAMP
+	int is_fast;
+#endif
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	int lagged;
+#endif
 
 	if (unlikely(!curr))
 		return;
@@ -850,6 +875,47 @@ static void update_curr(struct cfs_rq *cfs_rq)
 
 	curr->vruntime += calc_delta_fair(delta_exec, curr);
 	update_min_vruntime(cfs_rq);
+
+#ifdef CONFIG_FAIRAMP
+	is_fast = rq_of(cfs_rq)->is_fast;
+
+	if (is_fast)
+		curr->sum_fast_exec_runtime += delta_exec;
+	else
+		curr->sum_slow_exec_runtime += delta_exec;
+#endif /* CONFIG_FAIRAMP */
+
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	if (curr->unit_fast_vruntime && curr->unit_slow_vruntime) {
+		if (is_fast) {
+			curr->fast_vruntime += delta_exec_weighted;
+			if (curr->unit_fast_vruntime) {
+				while (curr->fast_vruntime > curr->unit_fast_vruntime) {
+					curr->fast_round++;
+					curr->fast_vruntime -= curr->unit_fast_vruntime;
+				}
+			}
+		} else {
+			curr->slow_vruntime += delta_exec_weighted;
+			if (curr->unit_slow_vruntime) {
+				while (curr->slow_vruntime > curr->unit_slow_vruntime) {
+					curr->slow_round++;
+					curr->slow_vruntime -= curr->unit_slow_vruntime;
+				}
+			}
+		}
+
+		lagged = curr->fast_round - curr->slow_round;
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+		if (lagged > FAIRAMP_MAX_LAGGED)
+			lagged = FAIRAMP_MAX_LAGGED;
+#endif
+		if (curr->lagged != lagged) {
+			curr->lagged = lagged;
+			update_rq_max_lagged(rq_of(cfs_rq), task_of(curr), lagged, 1);
+		}
+	} /* TODO: else case is considered when unit_*_vruntime is modified */
+#endif /* CONFIG_FAIRAMP_DO_SCHED */
 
 	if (entity_is_task(curr)) {
 		struct task_struct *curtask = task_of(curr);
@@ -4091,6 +4157,38 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 		update_min_vruntime(cfs_rq);
 }
 
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+/* Does the task have lagged fast or slow round? */
+inline int is_lagged(int lagged, struct rq *rq) {
+	return (lagged != 0) && ((lagged > 0) == rq->is_fast);
+}
+
+static int idlest_fast_core(int my_lagged) {
+	int cpu;
+	int max_lagged = my_lagged;
+	int max_cpu = -1;
+	for_each_cpu(cpu, cpu_fast_mask) {
+		if (idle_cpu(cpu))
+			return cpu;
+		if (cpu_rq(cpu)->max_lagged > max_lagged) {
+			max_cpu = cpu;
+			max_lagged = cpu_rq(cpu)->max_lagged;
+		}
+	}
+	return max_cpu;
+}
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+static int idle_fast_core(void) {
+	int cpu;
+	for_each_cpu(cpu, cpu_fast_mask) {
+		if (idle_cpu(cpu))
+			return cpu;
+	}
+	return -1;
+}
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+#endif /* CONFIG_FAIRAMP_DO_SCHED */
+
 /*
  * Preempt the current task with a newly woken task if needed:
  */
@@ -4100,6 +4198,29 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	unsigned long ideal_runtime, delta_exec;
 	struct sched_entity *se;
 	s64 delta;
+
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	if (rq_of(cfs_rq)->is_fast) { /* fast core => call schedule() */
+		if (curr->lagged > 0) {
+			resched_task(rq_of(cfs_rq)->curr);
+			return;
+		}
+	} else {
+		if (curr->lagged < 0) { /* wake up fast core to pull me */
+			int cpu = idlest_fast_core(curr->lagged);
+			if (cpu >= 0) {
+				resched_cpu(cpu);
+				return;
+			}
+		}
+	}
+	
+	/* Original CFS call check_preempt_tick() only when nr_running > 1.
+	   But, we should check the thread was lagged or not.
+	   We should return here. The code below assumes that nr_running > 1. */
+	if (cfs_rq->nr_running < 2)
+		return;
+#endif
 
 	ideal_runtime = sched_slice(cfs_rq, curr);
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
@@ -4281,7 +4402,12 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 		return;
 #endif
 
+#ifndef CONFIG_FAIRAMP_DO_SCHED
 	if (cfs_rq->nr_running > 1)
+#else
+	/* on the fast core, check_preempt_tick() need to be run frequently for fairamp balancing */
+	if (rq_of(cfs_rq)->is_fast || cfs_rq->nr_running > 1)
+#endif
 		check_preempt_tick(cfs_rq, curr);
 }
 
@@ -5221,6 +5347,9 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	assert_list_leaf_cfs_rq(rq);
 
 	hrtick_update(rq);
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	update_rq_max_lagged(rq, p, p->se.lagged, 1);
+#endif
 }
 
 static void set_next_buddy(struct sched_entity *se);
@@ -5281,6 +5410,9 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 
 	util_est_dequeue(&rq->cfs, p, task_sleep);
 	hrtick_update(rq);
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	update_rq_max_lagged(rq, p, p->se.lagged, 0);
+#endif
 }
 
 #ifdef CONFIG_SMP
@@ -6439,6 +6571,13 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 	int want_affine = 0;
 	int sync = (wake_flags & WF_SYNC) && !(current->flags & PF_EXITING);
 
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+	new_cpu = idle_fast_core();
+	if (new_cpu >= 0)
+		return new_cpu;
+	new_cpu = cpu;
+#endif
+
 	if (sd_flag & SD_BALANCE_WAKE) {
 		record_wakee(p);
 		want_affine = !wake_wide(p) && !wake_cap(p, cpu, prev_cpu)
@@ -7168,6 +7307,36 @@ static inline int migrate_degrades_locality(struct task_struct *p,
 }
 #endif
 
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+/*
+ * can_migrate_task_fairamp - simpler version of can_migrate_task()
+ */
+static
+int can_migrate_task_fairamp(struct task_struct *p, int src_cpu, int dst_cpu)
+{
+	if (p->se.unit_fast_vruntime || p->se.unit_slow_vruntime) {
+		int is_fast = cpu_rq(dst_cpu)->is_fast;
+		if ((is_fast && p->se.unit_fast_vruntime == 0) ||
+				(!is_fast && p->se.unit_slow_vruntime == 0))
+		return 0;
+	}
+
+	/*
+	 * We do not migrate tasks that are:
+	 * 1) running (obviously), or
+	 * 2) cannot be migrated to this CPU due to cpus_allowed
+	 */
+	if (!cpumask_test_cpu(dst_cpu, tsk_cpus_allowed(p))) {
+		schedstat_inc(p, se.statistics.nr_failed_migrations_affine);
+		return 0;
+	}
+
+	/* fairamb_balance() considers the running task */
+
+	return 1;
+}
+#endif /* CONFIG_FAIRAMP_DO_SCHED */
+
 /*
  * can_migrate_task - may task p from runqueue rq be migrated to this_cpu?
  */
@@ -7175,6 +7344,15 @@ static
 int can_migrate_task(struct task_struct *p, struct lb_env *env)
 {
 	int tsk_cache_hot;
+
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	if (p->se.unit_fast_vruntime || p->se.unit_slow_vruntime) {
+		int is_fast = env->dst_rq->is_fast;
+		if ((is_fast && p->se.unit_fast_vruntime == 0) ||
+				(!is_fast && p->se.unit_slow_vruntime == 0))
+		return 0;
+	}
+#endif
 
 	lockdep_assert_held(&env->src_rq->lock);
 
@@ -7248,6 +7426,17 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	schedstat_inc(p->se.statistics.nr_failed_migrations_hot);
 	return 0;
 }
+
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+static void detach_task_fairamp(struct task_struct *p, struct rq *src_rq, struct rq *dst_rq)
+{
+	lockdep_assert_held(src_rq->lock);
+
+	p->on_rq = TASK_ON_RQ_MIGRATING;
+	deactivate_task(src_rq, p, DEQUEUE_NOCLOCK);
+	set_task_cpu(p, dst_rq->cpu);
+}
+#endif
 
 /*
  * detach_task() -- detach the task for the migration specified in env
@@ -8834,7 +9023,13 @@ more_balance:
 		if (idle != CPU_NEWLY_IDLE)
 			sd->nr_balance_failed++;
 
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+		if (need_active_balance(&env) && (!this_rq->is_fast && busiest->is_fast))
+			fairamp_schedstat_inc(this_rq, load_balance_give_up_fast_to_slow_active_balance);
+		if (need_active_balance(&env) && (this_rq->is_fast || !busiest->is_fast)) {
+#else
 		if (need_active_balance(&env)) {
+#endif
 			unsigned long flags;
 
 			raw_spin_lock_irqsave(&busiest->lock, flags);
@@ -9728,6 +9923,402 @@ out:
 	return pulled_task;
 }
 
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+static int fairamp_balance_cpu_stop(void *data);
+
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+static int fairamp_fast_core_first_cpu_stop(void *data);
+
+/* fairamp_fast_core_first is called by fairamp_balance() without this_rq lock. */
+/* Just pull a task from that_rq */
+void fairamp_fast_core_first(int this_cpu, struct rq *this_rq, int that_cpu, struct rq *that_rq)
+{
+	unsigned long flags;
+	int active_balance = 0;
+	struct task_struct *p;
+	struct task_struct *that_task = NULL;
+
+	local_irq_save(flags);
+	double_rq_lock(this_rq, that_rq);
+	if (!that_rq->nr_running || that_rq->active_balance)
+		goto out_double_locking;
+
+	if (that_rq->max_lagged_task &&
+			can_migrate_task_fairamp(that_rq->max_lagged_task, that_cpu, this_cpu)) {
+		that_task = that_rq->max_lagged_task;
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_first_lagged_task);
+	}
+
+	if (!that_task) { /* find another candidate */
+		list_for_each_entry(p, &that_rq->cfs_tasks, se.group_node) {
+			if (can_migrate_task_fairamp(p, that_cpu, this_cpu)) {
+				that_task = p;
+				break;
+			}
+		}
+	}
+
+	if (!that_task) {
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_first_no_migratable_task);
+		goto out_double_locking;
+	}
+	
+
+	if (!task_running(that_rq, that_task)) {
+		if(that_task->state != TASK_RUNNING 
+				&& that_task->state != TASK_WAKING 
+				&& !(task_thread_info(that_task)->preempt_count & PREEMPT_ACTIVE)) {
+			fdbg("[WILL_WARN] fcf this_cpu: %d that_cpu: %d "
+				 "that_task->pid: %d comm: %s state: %lx preempt_count: %x\n",
+						this_cpu, that_cpu, 
+						that_task->pid, that_task->comm, that_task->state, 
+						task_thread_info(that_task)->preempt_count);
+		}
+		detach_task_fairamp(that_task, that_rq, this_rq);
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_first_passive);
+	} else {
+		that_rq->active_balance = 1;
+		that_rq->amp_balance = 1;
+		that_rq->push_cpu = this_cpu;
+		active_balance = 1;
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_first_active);
+	}
+out_double_locking:
+	double_rq_unlock(this_rq, that_rq);
+	local_irq_restore(flags);
+
+	if (active_balance) {
+		stop_one_cpu_nowait(that_cpu,
+			fairamp_fast_core_first_cpu_stop, that_rq,
+			&that_rq->active_balance_work);
+	}
+
+	return;
+}
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+
+/* fairamp_balance is called by schedule() if this_cpu has a lagged task. */
+/* Attempts to swap two lagged tasks in order to balance */
+/* NOTE that this function always run on fast cores */
+void fairamp_balance(int this_cpu, struct rq *this_rq)
+{
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+	int fcf_mode = this_rq->nr_running ? 0 : 1; /* if nr_running == 0, fast core first mode */
+	int max_lagged_init = fcf_mode 
+	/* fast core first mode (no task or no lagged task) pulls any tasks */
+							? (FAIRAMP_MAX_LAGGED + 1) 
+	/* with non-fcf_mode, this_rq->min_lagged is the exact answer. But, we do not maintain the value
+		Also, there are two excuses.
+		Firstly, we pull a task from the runqueue with the lowest max_lagged.
+		Secondly, anyway, the puled task has the lower lagged value, so that balancing is improved. */
+							: this_rq->max_lagged; 
+#else
+#define max_lagged_init 0
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+	int max_lagged = max_lagged_init;
+	struct sched_domain *sd;
+	struct cpumask *cpus = __get_cpu_var(load_balance_tmpmask);
+	int cpu, that_cpu = -1;
+	struct rq *rq = NULL, *that_rq = NULL;
+	struct task_struct *this_task = NULL, *that_task = NULL;
+	unsigned long flags;
+	int this_active_balance = 0, that_active_balance = 0;
+
+	fairamp_schedstat_inc(this_rq, fairamp_balance_called); 
+	
+	/*
+	 * Drop the rq->lock, but keep IRQ/preempt disabled.
+	 */
+	raw_spin_unlock(&this_rq->lock);
+	
+	rcu_read_lock();
+	for_each_domain(this_cpu, sd) {
+		cpumask_andnot(cpus, sched_domain_span(sd), cpu_fast_mask); /* slow cores */
+		
+		for_each_cpu(cpu, cpus) {
+			rq = cpu_rq(cpu);
+
+			if (rq->active_balance || !rq->nr_running)
+				continue;
+
+			if (rq->max_lagged < max_lagged) {
+				that_cpu = cpu;
+				that_rq = rq;
+				max_lagged = rq->max_lagged;
+			}
+		}
+
+		if (max_lagged < max_lagged_init)
+			break;
+	}
+	rcu_read_unlock();
+
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+	if (fcf_mode) { /* fast core first mode */
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_first); 
+		if (max_lagged <= FAIRAMP_MAX_LAGGED)
+			fairamp_fast_core_first(this_cpu, this_rq, that_cpu, that_rq);
+		else
+			fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_first_no_candidate); 
+		raw_spin_lock(&this_rq->lock);
+		return;
+	}
+
+	/* if there are much better fast core than me, give up the balancing at this time. */
+	cpu = idlest_fast_core(this_rq->max_lagged);
+	if (max_lagged > 0 && cpu >= 0 
+			&& cpu_rq(cpu)->max_lagged - this_rq->max_lagged >= GIVE_UP_MAX_LAGGED_THRESHOLD) {
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_balancing_give_up); 
+		raw_spin_lock(&this_rq->lock);
+		return;
+	}
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+	
+	if (max_lagged == max_lagged_init) {
+		fairamp_schedstat_inc(this_rq, fairamp_balance_no_candidate); 
+		goto out_balanced;
+	}
+
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+	if (max_lagged > 0)
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_balancing_try); 
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+
+	/* additional checkups before double locking */
+	if (that_rq->amp_balance) {
+		max_lagged = max_lagged_init;
+		fairamp_schedstat_inc(this_rq, fairamp_balance_that_rq_is_balancing);
+		goto out_balanced;
+	}
+
+	local_irq_save(flags);
+	double_rq_lock(this_rq, that_rq);
+	
+	this_task = this_rq->max_lagged_task;
+	that_task = that_rq->max_lagged_task;
+
+	/* final checkups since locking might be renewaled due to balanced locking */
+	/* In these cases, give up the swapping - watch for other chances later */
+	if (!this_task || !that_task) {
+		fairamp_schedstat_inc(this_rq, fairamp_balance_task_lost_double_checking); 
+		max_lagged = max_lagged_init;	
+		goto out_double_locking;
+	}
+	if (!can_migrate_task_fairamp(this_task, this_cpu, that_cpu) ||
+		!can_migrate_task_fairamp(that_task, that_cpu, this_cpu)) {
+		fairamp_schedstat_inc(this_rq, fairamp_balance_cannot_migrate_task_double_checking); 
+		max_lagged = max_lagged_init;	/* give up the swapping tasks - wait for other chances later */
+		goto out_double_locking;
+	}
+
+	if ((task_running(that_rq, that_task) && that_rq->active_balance) ||
+		(task_running(this_rq, this_task) && this_rq->active_balance)) {
+		/* give up the swapping tasks - wait for other chances later */
+		fairamp_schedstat_inc(this_rq, fairamp_balance_task_running_double_checking); 
+		max_lagged = max_lagged_init;	
+		goto out_double_locking;
+	}
+
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+	if (max_lagged > 0)
+		fairamp_schedstat_inc(this_rq, fairamp_balance_fast_core_balancing_succeed);
+#endif
+	
+	if (!task_running(this_rq, this_task)) {
+		if(this_task->state != TASK_RUNNING 
+				&& this_task->state != TASK_WAKING 
+				&& !(task_thread_info(this_task)->preempt_count & PREEMPT_ACTIVE)) {
+			fdbg("[WILL_WARN] balance_this this_cpu: %d that_cpu: %d "
+				 "this_task->pid: %d comm: %s state: %lx preempt_count: %x\n",
+						this_cpu, that_cpu, 
+						this_task->pid, this_task->comm, this_task->state, 
+						task_thread_info(this_task)->preempt_count);
+		}
+		/* if this_rq->max_lagged_task is migratable and not running,
+			move to that_rq and this_to_that = 1 */
+		detach_task_fairamp(this_task, this_rq, that_rq);
+		fairamp_schedstat_inc(this_rq, fairamp_balance_this_to_that_passive); 
+	} else {
+		this_rq->active_balance = 1;
+		this_rq->amp_balance = 1;
+		this_rq->push_cpu = that_cpu;
+		this_active_balance = 1;	
+		fairamp_schedstat_inc(this_rq, fairamp_balance_this_to_that_active); 
+	}
+	
+	if (!task_running(that_rq, that_task)) {
+		if(that_task->state != TASK_RUNNING 
+				&& that_task->state != TASK_WAKING 
+				&& !(task_thread_info(that_task)->preempt_count & PREEMPT_ACTIVE)) {
+			printk(KERN_ERR "[WILL_WARN] balance_that this_cpu: %d that_cpu: %d "
+						"that_task->pid: %d comm: %s state: %lx preempt_count: %x\n",
+						this_cpu, that_cpu, 
+						that_task->pid, that_task->comm, that_task->state, 
+						task_thread_info(that_task)->preempt_count);
+		}
+		/* if that_rq->max_lagged_task is migratable and not running,
+			move to this_rq and that_to_this = 1 */
+		detach_task_fairamp(that_task, that_rq, this_rq);
+		fairamp_schedstat_inc(this_rq, fairamp_balance_that_to_this_passive); 
+	} else {
+		that_rq->active_balance = 1;
+		that_rq->amp_balance = 1;
+		that_rq->push_cpu = this_cpu;
+		that_active_balance = 1;
+		fairamp_schedstat_inc(this_rq, fairamp_balance_that_to_this_active); 
+	}
+
+out_double_locking:
+	double_rq_unlock(this_rq, that_rq);
+	local_irq_restore(flags);
+
+	if (this_active_balance) {
+		stop_one_cpu_nowait(this_cpu,
+			fairamp_balance_cpu_stop, this_rq,
+			&this_rq->active_balance_work);
+	}
+
+	if (that_active_balance) {
+		stop_one_cpu_nowait(that_cpu,
+			fairamp_balance_cpu_stop, that_rq,
+			&that_rq->active_balance_work);
+	}
+	
+out_balanced:
+	if (max_lagged == max_lagged_init)
+		fairamp_schedstat_inc(this_rq, fairamp_balance_failed); 
+
+	raw_spin_lock(&this_rq->lock);
+	return;
+}
+
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+/*
+ * fairamp_fast_core_first_cpu_stop is run by cpu stopper. It pushes
+ * running tasks off the slow core to the idle fast core 
+ */
+static int fairamp_fast_core_first_cpu_stop(void *data)
+{
+	struct rq *src_rq = data;
+	int src_cpu = cpu_of(src_rq);
+	int dst_cpu = src_rq->push_cpu;
+	struct rq *dst_rq = cpu_rq(dst_cpu);
+	struct task_struct *task = NULL, *p, *n;
+	unsigned long flags;
+	
+	BUG_ON(src_rq == dst_rq);
+	fairamp_schedstat_inc(src_rq, fairamp_fast_core_first_cpu_stop_called); 
+	
+	/* make sure the requested cpu hasn't gone down in the meantime */
+	if (unlikely(src_cpu != smp_processor_id()))
+		return 0;
+	
+	if (unlikely(!src_rq->amp_balance)) {
+		fairamp_schedstat_inc(src_rq, fairamp_fast_core_first_cpu_stop_during_not_balancing); 
+		return 0;
+	}
+
+	local_irq_save(flags);
+	double_rq_lock(src_rq, dst_rq);
+
+	if (src_rq->max_lagged_task &&
+			can_migrate_task_fairamp(src_rq->max_lagged_task, src_cpu, dst_cpu)) 
+		task = src_rq->max_lagged_task;
+
+	if (!task) { /* find another candidate */
+		list_for_each_entry_safe(p, n, &src_rq->cfs_tasks, se.group_node) {
+			if (can_migrate_task_fairamp(p, src_cpu, dst_cpu)) {
+				task = p;
+				break;
+			}
+		}
+	}
+
+	if (!task) {
+		fairamp_schedstat_inc(src_rq, fairamp_fast_core_first_cpu_stop_no_migratable_task);
+		goto out_double_unlock;
+	}
+
+	detach_task_fairamp(task, src_rq, dst_rq);
+	fairamp_schedstat_inc(src_rq, fairamp_fast_core_first_cpu_stop_succeed); 
+
+out_double_unlock:
+	src_rq->amp_balance = 0;
+	src_rq->active_balance = 0;
+	double_rq_unlock(src_rq, dst_rq);
+	local_irq_restore(flags);
+	return 0;
+}
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+
+/*
+ * fairamp_load_balance_cpu_stop is run by cpu stopper. It pushes
+ * running tasks off the lagged CPU onto other CPU lagged in another direction.
+ */
+static int fairamp_balance_cpu_stop(void *data)
+{
+	struct rq *src_rq = data;
+	int src_cpu = cpu_of(src_rq);
+	int dst_cpu = src_rq->push_cpu;
+	struct rq *dst_rq = cpu_rq(dst_cpu);
+	
+	BUG_ON(src_rq == dst_rq);
+
+	raw_spin_lock_irq(&src_rq->lock);
+
+	/* make sure the requested cpu hasn't gone down in the meantime */
+	if (unlikely(src_cpu != smp_processor_id()))
+		goto out_unlock;
+	
+	fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_called); 
+
+	if (unlikely(!src_rq->amp_balance)) {
+		fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_during_not_balancing); 
+		goto out_unlock;
+	}
+
+	/* Is there the task to move? */
+	if (unlikely(src_rq->max_lagged_task == NULL)) {
+		fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_task_is_gone); 
+		goto out_unlock;
+	}
+	
+	if (!can_migrate_task_fairamp(src_rq->max_lagged_task, src_cpu, dst_cpu)) {
+		fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_cannot_migrate_task); 
+		goto out_unlock;
+	}
+
+	/* move a task from busiest_rq to target_rq */
+	double_lock_balance(src_rq, dst_rq);
+
+	/* check again since double_lock_balance() might release my lock */
+	if (src_rq->amp_balance && src_rq->max_lagged_task) {
+		detach_task_fairamp(src_rq->max_lagged_task, src_rq, dst_rq);
+		fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_succeed); 
+	} else {
+		fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_already_while_double_locking); 
+		goto out_double_unlock;
+	}
+
+	if (dst_rq->amp_balance && dst_rq->push_cpu == src_cpu
+			&& dst_rq->max_lagged_task
+			&& !task_running(dst_rq, dst_rq->max_lagged_task)) {
+		/* early swapping to reduce locking overhead */
+		detach_task_fairamp(dst_rq->max_lagged_task, dst_rq, src_rq);
+		dst_rq->amp_balance = 0;
+		dst_rq->active_balance = 0;
+		fairamp_schedstat_inc(src_rq, fairamp_balance_cpu_stop_succeed_to_migrate_that_task); 
+	}
+out_double_unlock:
+	double_unlock_balance(src_rq, dst_rq);
+out_unlock:
+	src_rq->amp_balance = 0;
+	src_rq->active_balance = 0;
+	raw_spin_unlock_irq(&src_rq->lock);
+	return 0;
+}
+#endif /* CONFIG_FAIRAMP_DO_SCHED */
+
 /*
  * run_rebalance_domains is triggered when needed from the scheduler tick.
  * Also triggered for nohz idle balancing (with nohz_balancing_kick set).
@@ -10016,6 +10607,16 @@ static void set_curr_task_fair(struct rq *rq)
 		account_cfs_rq_runtime(cfs_rq, 0);
 	}
 }
+
+#ifdef CONFIG_FAIRAMP
+void update_cpu_time_type(void *dummy) {
+	struct rq *rq = this_rq();
+	raw_spin_lock(&rq->lock);
+	update_rq_clock(rq);
+	update_curr(&rq->cfs);
+	raw_spin_unlock(&rq->lock);
+}
+#endif /* CONFIG_FAIRAMP */
 
 void init_cfs_rq(struct cfs_rq *cfs_rq)
 {
