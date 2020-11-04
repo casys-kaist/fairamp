@@ -4167,7 +4167,7 @@ static int idlest_fast_core(int my_lagged) {
 	int cpu;
 	int max_lagged = my_lagged;
 	int max_cpu = -1;
-	for_each_cpu(cpu, cpu_fast_mask) {
+	for_each_cpu(cpu, __cpu_fast_mask) {
 		if (idle_cpu(cpu))
 			return cpu;
 		if (cpu_rq(cpu)->max_lagged > max_lagged) {
@@ -4180,7 +4180,7 @@ static int idlest_fast_core(int my_lagged) {
 #ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
 static int idle_fast_core(void) {
 	int cpu;
-	for_each_cpu(cpu, cpu_fast_mask) {
+	for_each_cpu(cpu, __cpu_fast_mask) {
 		if (idle_cpu(cpu))
 			return cpu;
 	}
@@ -10033,7 +10033,7 @@ void fairamp_balance(int this_cpu, struct rq *this_rq)
 	
 	rcu_read_lock();
 	for_each_domain(this_cpu, sd) {
-		cpumask_andnot(cpus, sched_domain_span(sd), cpu_fast_mask); /* slow cores */
+		cpumask_andnot(cpus, sched_domain_span(sd), __cpu_fast_mask); /* slow cores */
 		
 		for_each_cpu(cpu, cpus) {
 			rq = cpu_rq(cpu);

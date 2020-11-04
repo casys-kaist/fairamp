@@ -91,13 +91,16 @@ extern struct cpumask __cpu_online_mask;
 extern struct cpumask __cpu_present_mask;
 extern struct cpumask __cpu_active_mask;
 #ifdef CONFIG_FAIRAMP
-extern const struct cpumask *const cpu_fast_mask;
+extern struct cpumask __cpu_fast_mask;
 #endif
 
 #define cpu_possible_mask ((const struct cpumask *)&__cpu_possible_mask)
 #define cpu_online_mask   ((const struct cpumask *)&__cpu_online_mask)
 #define cpu_present_mask  ((const struct cpumask *)&__cpu_present_mask)
 #define cpu_active_mask   ((const struct cpumask *)&__cpu_active_mask)
+#ifdef CONFIG_FAIRAMP
+#define cpu_fask_mask   ((const struct cpumask *)&__cpu_fast_mask)
+#endif
 
 #if NR_CPUS > 1
 #define num_online_cpus()	cpumask_weight(cpu_online_mask)
@@ -105,7 +108,7 @@ extern const struct cpumask *const cpu_fast_mask;
 #define num_present_cpus()	cpumask_weight(cpu_present_mask)
 #define num_active_cpus()	cpumask_weight(cpu_active_mask)
 #ifdef CONFIG_FAIRAMP
-#define num_fast_cpus()		cpumask_weight(cpu_fast_mask)
+#define num_fast_cpus()		cpumask_weight(__cpu_fast_mask)
 #define num_slow_cpus()		(num_online_cpus() - num_fast_cpus())
 #endif
 #define cpu_online(cpu)		cpumask_test_cpu((cpu), cpu_online_mask)
@@ -113,7 +116,7 @@ extern const struct cpumask *const cpu_fast_mask;
 #define cpu_present(cpu)	cpumask_test_cpu((cpu), cpu_present_mask)
 #define cpu_active(cpu)		cpumask_test_cpu((cpu), cpu_active_mask)
 #ifdef CONFIG_FAIRAMP
-#define cpu_fast(cpu)		cpumask_test_cpu((cpu), cpu_fast_mask)
+#define cpu_fast(cpu)		cpumask_test_cpu((cpu), __cpu_fast_mask)
 #define cpu_slow(cpu)		(!cpu_fast(cpu))
 #endif
 #else
@@ -873,7 +876,7 @@ set_cpu_fast(unsigned int cpu, bool fast)
 static inline void
 set_cpu_slow(unsigned int cpu, bool fast)
 {
-	set_cpu_fast(cpu, !slow);
+	set_cpu_fast(cpu, !fast);
 }
 #endif
 
