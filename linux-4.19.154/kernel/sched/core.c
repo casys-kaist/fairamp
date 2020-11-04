@@ -5213,7 +5213,7 @@ __do_set_unit_vruntime(struct task_struct *p,
 {
 	struct task_struct *t = p;
 	struct sched_entity *se;
-	unsigned long flags;
+	struct rq_flags rf;
 	struct rq *rq;
 	int on_rq;
 	struct task_struct *pos;
@@ -5233,7 +5233,7 @@ __do_set_unit_vruntime(struct task_struct *p,
 
 		/* We have to be careful. The task might be in the middle of scheduling on another CPU. */
 		/* Ref: kernel/sched/core.c:set_user_nice() */
-		rq = task_rq_lock(t, &flags);
+		rq = task_rq_lock(t, &rf);
 
 		on_rq = t->on_rq;
 		if (on_rq)
@@ -5280,11 +5280,11 @@ __do_set_unit_vruntime(struct task_struct *p,
 			if (task_running(rq, t)) {
 				if ((se->lagged == INT_MIN && rq->is_fast)
 						|| (se->lagged == INT_MAX && !rq->is_fast))
-					resched_task(rq->curr);
+					resched_curr(rq);
 			}
 		}
 
-		task_rq_unlock(rq, t, &flags);
+		task_rq_unlock(rq, t, &rf);
 
 traverse_next_thread:
 		if (!list_empty(&t->children)) {

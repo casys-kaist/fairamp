@@ -4202,7 +4202,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 #ifdef CONFIG_FAIRAMP_DO_SCHED
 	if (rq_of(cfs_rq)->is_fast) { /* fast core => call schedule() */
 		if (curr->lagged > 0) {
-			resched_task(rq_of(cfs_rq)->curr);
+			resched_curr(rq_of(cfs_rq));
 			return;
 		}
 	} else {
