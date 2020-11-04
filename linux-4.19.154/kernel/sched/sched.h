@@ -74,6 +74,12 @@
 #include "cpupri.h"
 #include "cpudeadline.h"
 
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+/* constants for fairamp */
+#define FAIRAMP_MAX_LAGGED 0xFF
+#define GIVE_UP_MAX_LAGGED_THRESHOLD 3
+#endif
+
 #ifdef CONFIG_SCHED_DEBUG
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
 #else
@@ -785,6 +791,7 @@ struct rq {
 	 * remote CPUs use both these fields when doing load calculation.
 	 */
 	unsigned int		nr_running;
+
 #ifdef CONFIG_NUMA_BALANCING
 	unsigned int		nr_numa_running;
 	unsigned int		nr_preferred_running;
@@ -801,6 +808,12 @@ struct rq {
 	unsigned int		nohz_tick_stopped;
 	atomic_t nohz_flags;
 #endif /* CONFIG_NO_HZ_COMMON */
+
+#ifdef CONFIG_FAIRAMP
+	int is_fast; /* 1 if this is rq of fast core. 0 otherwise.
+					It may be benefitial if @is_fast is in the same cacheline 
+					with above load related things */
+#endif
 
 	/* capture load from *all* tasks on this CPU: */
 	struct load_weight	load;
@@ -857,6 +870,12 @@ struct rq {
 	int			cpu;
 	int			online;
 
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	int         amp_balance; 
+	int         max_lagged;
+	struct task_struct      *max_lagged_task;
+#endif
+
 	struct list_head cfs_tasks;
 
 	struct sched_avg	avg_rt;
@@ -909,6 +928,52 @@ struct rq {
 	/* try_to_wake_up() stats */
 	unsigned int		ttwu_count;
 	unsigned int		ttwu_local;
+
+#ifdef CONFIG_FAIRAMP_STAT
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+	unsigned int fairamp_balance_called;
+	unsigned int fairamp_balance_no_candidate;
+	unsigned int fairamp_balance_that_rq_is_balancing;
+	unsigned int fairamp_balance_task_lost_double_checking;
+	unsigned int fairamp_balance_cannot_migrate_task_double_checking;
+	unsigned int fairamp_balance_task_running_double_checking;
+	unsigned int fairamp_balance_this_to_that_passive;
+	unsigned int fairamp_balance_this_to_that_active;
+	unsigned int fairamp_balance_that_to_this_passive;
+	unsigned int fairamp_balance_that_to_this_active;
+	unsigned int fairamp_balance_failed;
+
+	/* related to amp_balance_cpu_stop */
+	unsigned int fairamp_balance_cpu_stop_called;
+	unsigned int fairamp_balance_cpu_stop_during_not_balancing;
+	unsigned int fairamp_balance_cpu_stop_task_is_gone;
+	unsigned int fairamp_balance_cpu_stop_cannot_migrate_task;
+	unsigned int fairamp_balance_cpu_stop_succeed;
+	unsigned int fairamp_balance_cpu_stop_already_while_double_locking;
+	unsigned int fairamp_balance_cpu_stop_succeed_to_migrate_that_task;
+#endif
+
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+	unsigned int fairamp_balance_fast_core_first;
+	unsigned int fairamp_balance_fast_core_first_lagged_task;
+	unsigned int fairamp_balance_fast_core_first_no_migratable_task;
+	unsigned int fairamp_balance_fast_core_first_passive;
+	unsigned int fairamp_balance_fast_core_first_active;
+	unsigned int fairamp_balance_fast_core_first_no_candidate;
+	unsigned int fairamp_balance_fast_core_balancing_give_up;
+	unsigned int fairamp_balance_fast_core_balancing_try;
+	unsigned int fairamp_balance_fast_core_balancing_succeed;
+
+	/* related to fast_core_first_cpu_stop */
+	unsigned int fairamp_fast_core_first_cpu_stop_called;
+	unsigned int fairamp_fast_core_first_cpu_stop_during_not_balancing;
+	unsigned int fairamp_fast_core_first_cpu_stop_no_migratable_task;
+	unsigned int fairamp_fast_core_first_cpu_stop_succeed;
+	
+	/* in load_balance() */	
+	unsigned int load_balance_give_up_fast_to_slow_active_balance;
+#endif /* CONFIG_FAIRAMP_FAST_CORE_FIRST */
+#endif /* CONFIG_FAIRAMP_STAT */
 #endif
 
 #ifdef CONFIG_SMP
@@ -1603,6 +1668,13 @@ extern void update_group_capacity(struct sched_domain *sd, int cpu);
 extern void trigger_load_balance(struct rq *rq);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
+
+#ifdef CONFIG_FAIRAMP_DO_SCHED
+extern void fairamp_balance(int this_cpu, struct rq *this_rq);
+#endif
+#ifdef CONFIG_FAIRAMP_FAST_CORE_FIRST
+extern void fairamp_fast_core_first(int this_cpu, struct rq *this_rq, int that_cpu, struct rq *that_rq);
+#endif
 
 #endif
 
